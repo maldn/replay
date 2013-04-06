@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2013 Malte Böhme
+ * Licensed under the MIT license.
+ */
+
 package main
 
 import (
@@ -6,16 +11,19 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 )
 
 //var filename = flag.String("filename", "", "replay filename")
 func main() {
 	flag.Parse()
 	if flag.NArg() != 1 {
-		fmt.Printf("need (only) replay-file as argument")
+		fmt.Println("need (only) replay-file as argument")
+		os.Exit(1)
 	}
 	filename := flag.Arg(0)
 	replay, err := dota2.NewReplay(filename)
+	replay.LogLevel = 2
 	if err != nil {
 		log.Fatalf("cannot open replay '%s'", filename)
 	}
