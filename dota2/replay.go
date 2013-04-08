@@ -15,7 +15,7 @@ import (
 	//"os"
 	//"encoding/hex"
 	"errors"
-
+	"code.google.com/p/snappy-go/snappy"
 	"./proto" // generated files `protoc --go_out=generated *.proto`
 )
 
@@ -35,14 +35,13 @@ func NewReplay(filename string) (r *Replay, err error) {
 	return r, err
 }
 
-func (r *Replay) ReadPacket() (m proto.Message, err error) {
+func (r *Replay) ReadPacket() (msgType uint64, m proto.Message, err error) {
 
-	//fmt.Printf("size:%d\tpos:%d",r.size,r.pos)
 	if r.pos >= r.size {
-		//fmt.Printf("end of replay.. size:%d\tpos:%d",r.size,r.pos)
-		err_msg := fmt.Sprintf("end of replay.. size:%d\tpos:%d", r.size, r.pos)
+		err_msg := fmt.Sprintf("end of replay.. size:%d\tpos:%d\n", r.size, r.pos)
 		err = errors.New(err_msg)
-		return nil, err
+		// braindead inline-signaling, since a value of 0 might mean DEM_Stop packet
+		return 1<<16-1, nil, err
 	}
 
 	// no idea if its a bug in go-protobuf or valves stuff
@@ -51,7 +50,7 @@ func (r *Replay) ReadPacket() (m proto.Message, err error) {
 	msgType, size := binary.Uvarint(r.buf[r.pos:])
 	r.pos += size
 	if r.LogLevel >= 3 {
-		fmt.Printf("%s: msgType: %#x(%d) size:%d\n", getPacketName(uint64(msgType)), msgType, msgType, size)
+		fmt.Printf("%s: msgType: %#x(%d) size:%d\n", getPacketName(msgType), msgType, msgType, size)
 	}
 
 	tick, size := binary.Uvarint(r.buf[r.pos:])
@@ -67,13 +66,41 @@ func (r *Replay) ReadPacket() (m proto.Message, err error) {
 	}
 
 	//cast/return correct type
-	m = getType(uint64(msgType))
+	m, compressed := getType(msgType)
 	//check if we know the type
 	if m != nil {
-		err = proto.Unmarshal(r.buf[r.pos:r.pos+int(pktLen)], m)
-		if err != nil {
-			log.Fatalf("type:%d\npos:%d\npktLen:%d\n%v", msgType, r.pos, pktLen, err)
+		data := r.buf[r.pos:r.pos+int(pktLen)]
+
+		if r.LogLevel >= 4 && compressed == true {
+			fmt.Printf("compressed: %d %d\n", msgType, msgType &^ 0x70)
+
 		}
+		if compressed == true {
+			s, err := snappy.DecodedLen(data)
+			decoded := make([]byte,s)
+			data, err := snappy.Decode(decoded, data)
+			//p, s_p := binary.Uvarint(decoded[1:])
+			//data = decoded[0:]
+			if err != nil {
+				log.Fatal(err)
+			}
+			//fmt.Printf("p:%v s_p:%v\n",p,s_p)
+			//fmt.Printf("comp-size:\n %v\n s:%d len(data):%d\n", hex.Dump(data[0:120]), s, len(data))
+			//if tick != 82704 {
+			//if msgType == 116 {
+				err = proto.Unmarshal(data, m)
+				if err != nil {
+					fmt.Printf("### %s\n",getPacketName(msgType))
+					log.Fatalf("compress decode error type:%d\npos:%d\npktLen:%d\n%v", msgType, r.pos, pktLen, err)
+				}
+			//}
+		} else {
+			err = proto.Unmarshal(data, m)
+			if err != nil {
+				log.Fatalf("type:%d\npos:%d\npktLen:%d\n%v", msgType, r.pos, pktLen, err)
+			}
+		}
+		
 	} else {
 		if r.LogLevel >= 2 {
 			fmt.Printf("Unknown msgType:%d with pktLen %d at pos %d\n", msgType, pktLen, r.pos)
@@ -83,14 +110,18 @@ func (r *Replay) ReadPacket() (m proto.Message, err error) {
 		fmt.Printf("%v\n\n", m)
 	}
 	r.pos += int(pktLen)
-	return m, err
+	return msgType, m, err
 }
 
 //returns name from demo.proto:enum EDemoCommands
 func getPacketName(i uint64) (name string) {
-	name = demo.EDemoCommands_name[int32(i)]
-	if name == "" {
-		name = "Unknown Packet"
+	name = "Unknown Packet"
+	//name = demo.EDemoCommands_name[int32(i)]
+	if name = demo.EDemoCommands_name[int32(i)]; name == "" {
+		//maybe it's compressed
+		if name = demo.EDemoCommands_name[int32(i &^ 0x70)]; name != "" {
+			name = "Compressed " + name
+		}
 	}
 	return name
 }
@@ -98,40 +129,44 @@ func getPacketName(i uint64) (name string) {
 // naming scheme from demo.proto:enum EDemoCommands
 // no idea what they were smoking. probably just grown/legacy
 //DEM_FileHeader -> CDemoFileHeader 
-func getType(i uint64) proto.Message {
-	switch i {
+func getType(msgType uint64) (m proto.Message, compressed bool) {
+	if (msgType & 0x70)==0x70 {
+		msgType = msgType &^ 0x70
+		compressed = true
+	}
+	switch msgType {
 	//undefined in valves .proto
 	//-1:&CDemoError{},
 	case 0:
-		return &demo.CDemoStop{}
+		m = &demo.CDemoStop{}
 	case 1:
-		return &demo.CDemoFileHeader{}
+		m = &demo.CDemoFileHeader{}
 	case 2:
-		return &demo.CDemoFileInfo{}
+		m = &demo.CDemoFileInfo{}
 	case 3:
-		return &demo.CDemoSyncTick{}
+		m = &demo.CDemoSyncTick{}
 	case 4:
-		return &demo.CDemoSendTables{}
+		m = &demo.CDemoSendTables{}
 	case 5:
-		return &demo.CDemoClassInfo{}
+		m = &demo.CDemoClassInfo{}
 	case 6:
-		return &demo.CDemoStringTables{}
+		m = &demo.CDemoStringTables{}
 	case 7:
-		return &demo.CDemoPacket{}
+		m = &demo.CDemoPacket{}
 
 	//undefined in valves .proto
 	//8:&CDemoSignonPacket{},
 
 	case 9:
-		return &demo.CDemoConsoleCmd{}
+		m = &demo.CDemoConsoleCmd{}
 	case 10:
-		return &demo.CDemoCustomData{}
+		m = &demo.CDemoCustomData{}
 	case 11:
-		return &demo.CDemoCustomDataCallbacks{}
+		m = &demo.CDemoCustomDataCallbacks{}
 	case 12:
-		return &demo.CDemoUserCmd{}
+		m = &demo.CDemoUserCmd{}
 	case 13:
-		return &demo.CDemoFullPacket{}
+		m = &demo.CDemoFullPacket{}
 
 		//undefined in valves .proto
 		//14:&CDemoMax{},
@@ -140,5 +175,5 @@ func getType(i uint64) proto.Message {
 		// if messageID is > 0x70 binary OR it and decompress into that
 		//0x70:&CDemoIsCompressed{},
 	}
-	return nil
+	return
 }
