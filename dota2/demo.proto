@@ -69,7 +69,11 @@ option cc_generic_services = false;
 // time.
 //
 
-import "google/protobuf/descriptor.proto";
+// maldn: slight modification to original.
+// descriptor is not needed,
+// and i like this package to be called dota2
+package dota2;
+//import "google/protobuf/descriptor.proto";
 
 enum EDemoCommands
 {
@@ -92,7 +96,10 @@ enum EDemoCommands
 	DEM_Max					= 14;
 	DEM_IsCompressed		= 0x70;
 }
-
+message CDemoSignonPacket
+{
+	
+}
 message CDemoFileHeader
 {
 	required string demo_file_stamp = 1;

@@ -1,0 +1,4 @@
+note on modifications to generated .pb.go files:
+the json annotations have some small issues
+* do not omit empty fields. i want to know if there could be something. -> s/,omitempty//g
+* i want unknown data -> s/`json:"-"`/`json:"unknown,omitempty"`/g

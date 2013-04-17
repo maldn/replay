@@ -7,7 +7,6 @@ package main
 
 import (
 	"./dota2"
-	"code.google.com/p/goprotobuf/proto"
 	"flag"
 	"fmt"
 	"log"
@@ -15,12 +14,23 @@ import (
 	"encoding/json"
 	//"reflect"
 	//"encoding/binary"
+	//"./dota2/proto"
+	"time"
 )
+
+type jsonPkt struct {
+	// i dont like Uppercase keys
+	Name string `json:"name"`
+	Id uint64 `json:"id"`
+	Data interface{}`json:"data"`
+}
 
 //var filename = flag.String("filename", "", "replay filename")
 var logLevel = flag.Int("log", 1, "log level")
 func main() {
-	
+	//meassure how long parsing took
+	t0 := time.Now()
+
 	flag.Parse()
 	if flag.NArg() != 1 {
 		fmt.Println("need (only) replay-file as argument")
@@ -34,20 +44,36 @@ func main() {
 	}
 
 	//fmt.Printf("pos:%v\n",replay.pos)
-	var m proto.Message
+	var p dota2.Packet
 	for {
-		msgType, m, err := replay.ReadPacket()
+		p, err := replay.ReadPacket()
 		if err != nil {
 			//most likely we have reached the end of the replay
+
+
+			stats, _ := json.MarshalIndent(replay.PktCount,"","  ")
+			fmt.Printf("replay.PktCount:%s\n",stats)
+
+			//some statistics on what and how many packets were parsed
+			t1 := time.Now()
+			fmt.Printf("Parsing took %v.\n", t1.Sub(t0))
+
 			log.Fatal(err)
 			break
 		}
+		
 		//example for outputting json
-		if msgType == 7 && m != nil {
-			j, _ := json.MarshalIndent(m,"","  ")
+		// type 7 is DEM_Packet
+		var log_t uint64 = 7
+		if p.Id == log_t && p != nil {
+			j, _ := json.MarshalIndent(p,"","  ")
 			fmt.Printf("%s\n", j) // json
+			//v := reflect.ValueOf(m).Elem()
+			//b := v.FieldByName("data").Bytes()
+			//foo,_ :=binary.Uvarint(b)
+			//fmt.Printf("%#x\n", (*demo.CDemoPacket).(m).GetData())
 			//fmt.Printf("%v\n", m) // protobuf repr
-			return
+			//return
 			// example of using reflect to get fields not specified in type proto.Message
 			// this will be useful when reverse-engineering unknows fields
 			//v := reflect.ValueOf(m).Elem()
@@ -58,5 +84,5 @@ func main() {
 	}
 
 	//never reached, just to make sure we use m and please the go compiler
-	fmt.Printf("m:%v\n", m)
+	fmt.Printf("m:%v\n", p)
 }

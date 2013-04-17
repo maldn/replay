@@ -6,25 +6,46 @@
 package dota2
 
 import (
-	//"bytes"
+	//replay "demo.pb" // generated files `protoc --go_out=generated *.proto`
+	//replay "./proto/demo.pb"
 	"code.google.com/p/goprotobuf/proto"
+	"code.google.com/p/snappy-go/snappy"
 	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
-	//"os"
+	//"bytes"
 	//"encoding/hex"
-	"errors"
-	"code.google.com/p/snappy-go/snappy"
-	"./proto" // generated files `protoc --go_out=generated *.proto`
+	//"os"
 )
 
 type Replay struct {
 	buf       []byte
 	size, pos int // replay size, current position
 	LogLevel  int
+	PktCount map[string]int
 }
 
+type Packet struct {
+	Name string `json:"name"`
+	Id uint64 `json:"msg_id"`
+	Tick uint64 `json:"tick"`
+	Pos int `json:"position"`
+	Size int `json:"size"`
+	CompressedSize int `json:"compressed_size"`
+	Data interface{}`json:"data"`
+}
+func (p *Packet) String() (s string) {
+	j, err := json.MarshalIndent(p,"","  ")
+	s = string(j)
+	if err != nil {
+		return fmt.Sprintf("%v",p)
+	}
+	return s
+
+}
 func NewReplay(filename string) (r *Replay, err error) {
 	r = new(Replay)
 	r.buf, err = ioutil.ReadFile(filename)
@@ -32,17 +53,18 @@ func NewReplay(filename string) (r *Replay, err error) {
 	//FIXME: validate header
 	//header is a 8 byte string + 32bit size of replay file.
 	r.pos = 12
+	r.PktCount = make(map[string]int)
 	return r, err
 }
 
-func (r *Replay) ReadPacket() (msgType uint64, m proto.Message, err error) {
-
+func (r *Replay) ReadPacket() (p *Packet, err error) {
+	p = &Packet{}
 	if r.pos >= r.size {
 		err_msg := fmt.Sprintf("end of replay.. size:%d\tpos:%d\n", r.size, r.pos)
 		err = errors.New(err_msg)
-		// braindead inline-signaling, since a value of 0 might mean DEM_Stop packet
-		return 1<<16-1, nil, err
+		return nil, err
 	}
+
 
 	// no idea if its a bug in go-protobuf or valves stuff
 	// valve defines a msgType of -1 as DEM_Error but seems like the encoding is Uvarint..
@@ -52,30 +74,39 @@ func (r *Replay) ReadPacket() (msgType uint64, m proto.Message, err error) {
 	if r.LogLevel >= 3 {
 		fmt.Printf("%s: msgType: %#x(%d) size:%d\n", getPacketName(msgType), msgType, msgType, size)
 	}
+	// we overwrite this in case of a compressed packet
+	p.Id = msgType
 
 	tick, size := binary.Uvarint(r.buf[r.pos:])
 	r.pos += size
 	if r.LogLevel >= 3 {
 		fmt.Printf("tick: %#x(%d) len:%d\n", tick, tick, size)
 	}
+	p.Tick = tick
 
 	pktLen, size := binary.Uvarint(r.buf[r.pos:])
 	r.pos += size
 	if r.LogLevel >= 3 {
 		fmt.Printf("length: %d (%#x) %d\n", pktLen, pktLen, size)
 	}
+	p.CompressedSize =int(pktLen)
+	// we overwrite this in case of a compressed packet
+	p.Size = int(pktLen)
 
 	//cast/return correct type
-	m, compressed := getType(msgType)
+	m, compressed := r.getType(msgType)
 	//check if we know the type
 	if m != nil {
 		data := r.buf[r.pos:r.pos+int(pktLen)]
 
-		if r.LogLevel >= 4 && compressed == true {
-			fmt.Printf("compressed: %d %d\n", msgType, msgType &^ 0x70)
 
-		}
 		if compressed == true {
+			if r.LogLevel >= 4 {
+				fmt.Printf("compressed: %d %d\n", msgType, msgType &^ 0x70)
+			}
+			// we really only care about actual message IDs, not the compression indicator
+			p.Id = msgType &^ 0x70
+
 			s, err := snappy.DecodedLen(data)
 			decoded := make([]byte,s)
 			data, err := snappy.Decode(decoded, data)
@@ -84,16 +115,15 @@ func (r *Replay) ReadPacket() (msgType uint64, m proto.Message, err error) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			//fmt.Printf("p:%v s_p:%v\n",p,s_p)
-			//fmt.Printf("comp-size:\n %v\n s:%d len(data):%d\n", hex.Dump(data[0:120]), s, len(data))
-			//if tick != 82704 {
-			//if msgType == 116 {
-				err = proto.Unmarshal(data, m)
-				if err != nil {
-					fmt.Printf("### %s\n",getPacketName(msgType))
-					log.Fatalf("compress decode error type:%d\npos:%d\npktLen:%d\n%v", msgType, r.pos, pktLen, err)
-				}
-			//}
+			// set Size to decompressed size, we still have CompressedSize (was set above)
+			p.Size = s
+			
+			err = proto.Unmarshal(data, m)
+			if err != nil {
+				fmt.Printf("### %s\n",getPacketName(msgType))
+				log.Fatalf("compress decode error type:%d\npos:%d\npktLen:%d\n%v", msgType, r.pos, pktLen, err)
+			}
+
 		} else {
 			err = proto.Unmarshal(data, m)
 			if err != nil {
@@ -109,17 +139,25 @@ func (r *Replay) ReadPacket() (msgType uint64, m proto.Message, err error) {
 	if r.LogLevel >= 4 {
 		fmt.Printf("%v\n\n", m)
 	}
+	//gather some stats about distribution of packets
+	r.PktCount[getPacketName(msgType)]++
+	
+
+	p.Name = getPacketName(p.Id)
+	p.Data = m
+	p.Pos = r.pos
+
 	r.pos += int(pktLen)
-	return msgType, m, err
+	return p, err
+
 }
 
 //returns name from demo.proto:enum EDemoCommands
 func getPacketName(i uint64) (name string) {
 	name = "Unknown Packet"
-	//name = demo.EDemoCommands_name[int32(i)]
-	if name = demo.EDemoCommands_name[int32(i)]; name == "" {
+	if name = EDemoCommands_name[int32(i)]; name == "" {
 		//maybe it's compressed
-		if name = demo.EDemoCommands_name[int32(i &^ 0x70)]; name != "" {
+		if name = EDemoCommands_name[int32(i &^ 0x70)]; name != "" {
 			name = "Compressed " + name
 		}
 	}
@@ -128,52 +166,63 @@ func getPacketName(i uint64) (name string) {
 
 // naming scheme from demo.proto:enum EDemoCommands
 // no idea what they were smoking. probably just grown/legacy
-//DEM_FileHeader -> CDemoFileHeader 
-func getType(msgType uint64) (m proto.Message, compressed bool) {
+//DEM_FileHeader -> FileHeader
+//
+// no need to cache objects here, allocation is fast
+// allocating 26111 DemoPackets takes 2 ms
+
+// i tried hard to make this switch go away, but there is no way with go and protocol buffers
+// to get to the type of a message from its msgID
+// go's reflection is unable to inspect and get types from packages. you have to know the types beforehand
+// and valve didnt encoded the msgID, tick and msgSize in a protobuf-message
+// so that it would be possible to embed the messages in another protobuf message
+// ... sucks :-)
+func (r *Replay) getType(msgType uint64) (m proto.Message, compressed bool) {
 	if (msgType & 0x70)==0x70 {
 		msgType = msgType &^ 0x70
 		compressed = true
 	}
 	switch msgType {
 	//undefined in valves .proto
-	//-1:&CDemoError{},
+	//-1:&Error{},
 	case 0:
-		m = &demo.CDemoStop{}
+		m = &CDemoStop{}
 	case 1:
-		m = &demo.CDemoFileHeader{}
+		m = &CDemoFileHeader{}
 	case 2:
-		m = &demo.CDemoFileInfo{}
+		m = &CDemoFileInfo{}
 	case 3:
-		m = &demo.CDemoSyncTick{}
+		m = &CDemoSyncTick{}
 	case 4:
-		m = &demo.CDemoSendTables{}
+		m = &CDemoSendTables{}
 	case 5:
-		m = &demo.CDemoClassInfo{}
+		m = &CDemoClassInfo{}
 	case 6:
-		m = &demo.CDemoStringTables{}
+		m = &CDemoStringTables{}
 	case 7:
-		m = &demo.CDemoPacket{}
-
+		m = &CDemoPacket{}
+		
 	//undefined in valves .proto
-	//8:&CDemoSignonPacket{},
-
+	// but by me :)
+	case 8:
+		m= &CDemoSignonPacket{}
 	case 9:
-		m = &demo.CDemoConsoleCmd{}
+		m = &CDemoConsoleCmd{}
 	case 10:
-		m = &demo.CDemoCustomData{}
+		m = &CDemoCustomData{}
 	case 11:
-		m = &demo.CDemoCustomDataCallbacks{}
+		m = &CDemoCustomDataCallbacks{}
 	case 12:
-		m = &demo.CDemoUserCmd{}
+		m = &CDemoUserCmd{}
 	case 13:
-		m = &demo.CDemoFullPacket{}
+		m = &CDemoFullPacket{}
 
 		//undefined in valves .proto
-		//14:&CDemoMax{},
+		//14:&Max{},
 
 		// pseudo message, indication compression
-		// if messageID is > 0x70 binary OR it and decompress into that
-		//0x70:&CDemoIsCompressed{},
+		// if messageID has the bits 0x70 set, binary OR it and decompress into that
+		//0x70:&IsCompressed{},
 	}
 	return
 }
