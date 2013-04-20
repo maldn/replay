@@ -306,7 +306,7 @@ type CDemoPacket struct {
 	SequenceIn       *int32 `protobuf:"varint,1,opt,name=sequence_in" json:"sequence_in,omitempty"`
 	SequenceOutAck   *int32 `protobuf:"varint,2,opt,name=sequence_out_ack" json:"sequence_out_ack,omitempty"`
 	Data             []byte `protobuf:"bytes,3,opt,name=data" json:"data,omitempty"`
-	XXX_unrecognized []byte `json:"unknown,omitempty"`
+	XXX_unrecognized []byte `json:"-"`
 }
 
 func (m *CDemoPacket) Reset()         { *m = CDemoPacket{} }

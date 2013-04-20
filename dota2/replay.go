@@ -26,6 +26,13 @@ type Replay struct {
 	size, pos int // replay size, current position
 	LogLevel  int
 	PktCount map[string]int
+	Packets []*Packet `json:"packets`
+}
+
+type GameMessage struct {
+	Name string `json:"name"`
+	Id uint64 `json:"msg_id"`
+	Data proto.Message `json:"data"`
 }
 
 type Packet struct {
@@ -35,7 +42,8 @@ type Packet struct {
 	Pos int `json:"position"`
 	Size int `json:"size"`
 	CompressedSize int `json:"compressed_size"`
-	Data interface{}`json:"data"`
+	Messages []GameMessage `json:"messages"`
+	Data proto.Message `json:"data"`
 }
 func (p *Packet) String() (s string) {
 	j, err := json.MarshalIndent(p,"","  ")
@@ -54,11 +62,73 @@ func NewReplay(filename string) (r *Replay, err error) {
 	//header is a 8 byte string + 32bit size of replay file.
 	r.pos = 12
 	r.PktCount = make(map[string]int)
+	r.Packets = make([]*Packet,0,1000000)
 	return r, err
 }
+func (r *Replay) Parse() (err error) {
+	for {
+		p, err := r.ReadPacket() 
+		if err != nil {
+			//log.Fatalf("err:%v",err)
+			return err
+		}
+		// used to exclude unwanted (huge) messages.
+		switch p.Id {
+			case 4://SendTables
+			case 5://classInfo
+			case 6://stringTables
+			case 13: //fullPacket
+			default:
+				r.Packets = append(r.Packets, p)
 
-func (r *Replay) ReadPacket() (p *Packet, err error) {
+		}
+		// reallocating new space and marshalling everything at once is about twice as fast
+		//r.Packets = append(r.Packets, p)
+		// pkt, _ := json.MarshalIndent(p,"","  ")
+		// fmt.Printf("%s",pkt)
+
+	}
+	return err
+}
+
+func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
+	var pos int = 0
+	gameMessageType, size := binary.Uvarint(buf)
+	pos = size
+	gameMessageSize, size := binary.Uvarint(buf[pos:])
+	pos += size
+
+	gameMessage := GameMessage{}
+	gameMessage.Data = nil
+	//fmt.Printf("#####gamePacketType: %v\n",gamePacketType)
+	gameMessage.Id = gameMessageType
+	switch gameMessageType {
+		case 4:
+			gameMessage.Data = &CNETMsg_Tick{}
+		case 7:
+			gameMessage.Data = &CNETMsg_SignonState{}
+		case 8:
+			gameMessage.Data = &CSVCMsg_ServerInfo{}
+		
+	}
+	// generic way to set Name to type of .Data
+	gameMessage.Name = fmt.Sprintf("%T", gameMessage.Data)
+	if gameMessage.Data != nil {
+		err = proto.Unmarshal(buf[pos:pos+int(gameMessageSize)], gameMessage.Data)
+		gameMessages = append(gameMessages, gameMessage)
+	}
+	return
+}
+
+func readPacket(buf []byte) (p *Packet, size int, err error){
 	p = &Packet{}
+	pktType, size := binary.Uvarint(buf)
+	p.Id = pktType
+	return
+}
+func (r *Replay) ReadPacket() (p *Packet, err error) {
+	p, size, err := readPacket(r.buf[r.pos:])
+	//p = &Packet{}
 	if r.pos >= r.size {
 		err_msg := fmt.Sprintf("end of replay.. size:%d\tpos:%d\n", r.size, r.pos)
 		err = errors.New(err_msg)
@@ -69,7 +139,8 @@ func (r *Replay) ReadPacket() (p *Packet, err error) {
 	// no idea if its a bug in go-protobuf or valves stuff
 	// valve defines a msgType of -1 as DEM_Error but seems like the encoding is Uvarint..
 	// strange..
-	msgType, size := binary.Uvarint(r.buf[r.pos:])
+	//msgType, size := binary.Uvarint(r.buf[r.pos:])
+	msgType := p.Id
 	r.pos += size
 	if r.LogLevel >= 3 {
 		fmt.Printf("%s: msgType: %#x(%d) size:%d\n", getPacketName(msgType), msgType, msgType, size)
@@ -144,8 +215,28 @@ func (r *Replay) ReadPacket() (p *Packet, err error) {
 	
 
 	p.Name = getPacketName(p.Id)
-	p.Data = m
+	
+	//p.Data = m.(interface{})
 	p.Pos = r.pos
+
+	//handle messages that contain other packets
+	switch p.Id {
+		// DEM_Packet and DEM_SignonPacket have the same structure
+		case 7, 8:
+			//cast from proto.Message to concrete type, to access .Data
+			m2 := m.(*CDemoPacket)
+			packets, err := ParseGamePacket(m2.Data)
+			p.Messages = packets
+			if err != nil {
+				return p,err
+			}
+		//FullPacket
+		case 13:
+
+		default:
+			p.Data = m
+	 }
+	 
 
 	r.pos += int(pktLen)
 	return p, err
@@ -205,7 +296,9 @@ func (r *Replay) getType(msgType uint64) (m proto.Message, compressed bool) {
 	//undefined in valves .proto
 	// but by me :)
 	case 8:
-		m= &CDemoSignonPacket{}
+		//m= &CDemoSignonPacket{}
+		//same structure
+		m = &CDemoPacket{}
 	case 9:
 		m = &CDemoConsoleCmd{}
 	case 10:

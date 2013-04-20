@@ -42,32 +42,37 @@ func main() {
 	if err != nil {
 		log.Fatalf("cannot open replay '%s'", filename)
 	}
-
+	err = replay.Parse()
+	pkts, _ := json.MarshalIndent(replay.Packets,"","  ")
+	fmt.Printf("%v\nreplay.pkts:%s\n",err,pkts)
+	t1 := time.Now()
+	fmt.Printf("Parsing took %v.\n", t1.Sub(t0))
+	//return
 	//fmt.Printf("pos:%v\n",replay.pos)
-	var p dota2.Packet
-	for {
-		p, err := replay.ReadPacket()
-		if err != nil {
-			//most likely we have reached the end of the replay
+	// var p dota2.Packet
+	// for {
+	// 	p, err := replay.ReadPacket()
+	// 	if err != nil {
+	// 		//most likely we have reached the end of the replay
 
 
-			stats, _ := json.MarshalIndent(replay.PktCount,"","  ")
-			fmt.Printf("replay.PktCount:%s\n",stats)
+	// 		stats, _ := json.MarshalIndent(replay.PktCount,"","  ")
+	// 		fmt.Printf("replay.PktCount:%s\n",stats)
 
-			//some statistics on what and how many packets were parsed
-			t1 := time.Now()
-			fmt.Printf("Parsing took %v.\n", t1.Sub(t0))
+	// 		//some statistics on what and how many packets were parsed
+	// 		t1 := time.Now()
+	// 		fmt.Printf("Parsing took %v.\n", t1.Sub(t0))
 
-			log.Fatal(err)
-			break
-		}
+	// 		log.Fatal(err)
+	// 		break
+	// 	}
 		
 		//example for outputting json
 		// type 7 is DEM_Packet
-		var log_t uint64 = 7
-		if p.Id == log_t && p != nil {
-			j, _ := json.MarshalIndent(p,"","  ")
-			fmt.Printf("%s\n", j) // json
+		// var log_t uint64 = 7
+		// if p.Id == log_t && p != nil {
+		// 	j, _ := json.MarshalIndent(p,"","  ")
+		// 	fmt.Printf("%s\n", j) // json
 			//v := reflect.ValueOf(m).Elem()
 			//b := v.FieldByName("data").Bytes()
 			//foo,_ :=binary.Uvarint(b)
@@ -80,9 +85,9 @@ func main() {
 			//b := v.FieldByName("XXX_unrecognized").Bytes()
 			//foo,_ :=binary.Uvarint(b)
 			//fmt.Printf("XXX_unrecognized: %#x\n", b)
-		}
-	}
+		//}
+	//}
 
 	//never reached, just to make sure we use m and please the go compiler
-	fmt.Printf("m:%v\n", p)
+	//fmt.Printf("m:%v\n", p)
 }
