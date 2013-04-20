@@ -41,6 +41,7 @@ type Packet struct {
 	Tick uint64 `json:"tick"`
 	Pos int `json:"position"`
 	Size int `json:"size"`
+	Compressed bool `json:"compressed"`
 	CompressedSize int `json:"compressed_size"`
 	Messages []GameMessage `json:"messages"`
 	Data proto.Message `json:"data"`
@@ -67,7 +68,15 @@ func NewReplay(filename string) (r *Replay, err error) {
 }
 func (r *Replay) Parse() (err error) {
 	for {
-		p, err := r.ReadPacket() 
+		//TODO: just return, no need for an error
+		if r.pos >= r.size {
+			err_msg := fmt.Sprintf("end of replay.. size:%d\tpos:%d\n", r.size, r.pos)
+			err = errors.New(err_msg)
+			return err
+		}
+		//p = &Packet{}
+
+		p, err := r.ReadPacket()
 		if err != nil {
 			//log.Fatalf("err:%v",err)
 			return err
@@ -77,18 +86,15 @@ func (r *Replay) Parse() (err error) {
 			case 4://SendTables
 			case 5://classInfo
 			case 6://stringTables
-			case 13: //fullPacket
+			//case 7://Packet
+			//case 13: //fullPacket
+
 			default:
 				r.Packets = append(r.Packets, p)
 
 		}
-		// reallocating new space and marshalling everything at once is about twice as fast
-		//r.Packets = append(r.Packets, p)
-		// pkt, _ := json.MarshalIndent(p,"","  ")
-		// fmt.Printf("%s",pkt)
-
 	}
-	return err
+	return
 }
 
 func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
@@ -120,98 +126,69 @@ func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 	return
 }
 
-func readPacket(buf []byte) (p *Packet, size int, err error){
+func readPacket(buf []byte) (p *Packet, pos int, err error){
 	p = &Packet{}
-	pktType, size := binary.Uvarint(buf)
+	pos = 0
+	pktType, varint_len := binary.Uvarint(buf)
 	p.Id = pktType
-	return
-}
-func (r *Replay) ReadPacket() (p *Packet, err error) {
-	p, size, err := readPacket(r.buf[r.pos:])
-	//p = &Packet{}
-	if r.pos >= r.size {
-		err_msg := fmt.Sprintf("end of replay.. size:%d\tpos:%d\n", r.size, r.pos)
-		err = errors.New(err_msg)
-		return nil, err
-	}
+	pos += varint_len
 
-
-	// no idea if its a bug in go-protobuf or valves stuff
-	// valve defines a msgType of -1 as DEM_Error but seems like the encoding is Uvarint..
-	// strange..
-	//msgType, size := binary.Uvarint(r.buf[r.pos:])
-	msgType := p.Id
-	r.pos += size
-	if r.LogLevel >= 3 {
-		fmt.Printf("%s: msgType: %#x(%d) size:%d\n", getPacketName(msgType), msgType, msgType, size)
-	}
-	// we overwrite this in case of a compressed packet
-	p.Id = msgType
-
-	tick, size := binary.Uvarint(r.buf[r.pos:])
-	r.pos += size
-	if r.LogLevel >= 3 {
-		fmt.Printf("tick: %#x(%d) len:%d\n", tick, tick, size)
-	}
+	tick, varint_len := binary.Uvarint(buf[pos:])
 	p.Tick = tick
+	pos += varint_len
 
-	pktLen, size := binary.Uvarint(r.buf[r.pos:])
-	r.pos += size
-	if r.LogLevel >= 3 {
-		fmt.Printf("length: %d (%#x) %d\n", pktLen, pktLen, size)
-	}
-	p.CompressedSize =int(pktLen)
-	// we overwrite this in case of a compressed packet
+	pktLen, varint_len := binary.Uvarint(buf[pos:])
+	pos += varint_len
+	p.CompressedSize = int(pktLen)
+	// we overwrite this later in case of a compressed packet
 	p.Size = int(pktLen)
 
-	//cast/return correct type
-	m, compressed := r.getType(msgType)
-	//check if we know the type
-	if m != nil {
-		data := r.buf[r.pos:r.pos+int(pktLen)]
 
+	// raw packet data
+	data := buf[pos:pos+p.CompressedSize]
 
-		if compressed == true {
-			if r.LogLevel >= 4 {
-				fmt.Printf("compressed: %d %d\n", msgType, msgType &^ 0x70)
-			}
-			// we really only care about actual message IDs, not the compression indicator
-			p.Id = msgType &^ 0x70
+	pkt, compressed := getType(p.Id)
+	p.Compressed = compressed
 
-			s, err := snappy.DecodedLen(data)
-			decoded := make([]byte,s)
-			data, err := snappy.Decode(decoded, data)
-			//p, s_p := binary.Uvarint(decoded[1:])
-			//data = decoded[0:]
-			if err != nil {
-				log.Fatal(err)
-			}
-			// set Size to decompressed size, we still have CompressedSize (was set above)
-			p.Size = s
-			
-			err = proto.Unmarshal(data, m)
-			if err != nil {
-				fmt.Printf("### %s\n",getPacketName(msgType))
-				log.Fatalf("compress decode error type:%d\npos:%d\npktLen:%d\n%v", msgType, r.pos, pktLen, err)
-			}
+	if p.Compressed == true {
+		// we really only care about actual message IDs, not the compression indicator
+		p.Id = p.Id &^ 0x70
 
-		} else {
-			err = proto.Unmarshal(data, m)
-			if err != nil {
-				log.Fatalf("type:%d\npos:%d\npktLen:%d\n%v", msgType, r.pos, pktLen, err)
-			}
+		decodedLen, err := snappy.DecodedLen(data)
+		decoded := make([]byte, decodedLen)
+		data, err := snappy.Decode(decoded, data)
+		//p, s_p := binary.Uvarint(decoded[1:])
+		//data = decoded[0:]
+		if err != nil {
+			log.Fatal(err)
 		}
+		// set Size to decompressed size, we still have CompressedSize (was set above)
+		p.Size = decodedLen
 		
+		err = proto.Unmarshal(data, pkt)
+		if err != nil {
+			fmt.Printf("### %s\n",getPacketName(p.Id))
+			log.Fatalf("compress decode error type:%d\npos:%d\npktLen:%d\n%v", p.Id, pos, p.CompressedSize, err)
+		}
+
 	} else {
-		if r.LogLevel >= 2 {
-			fmt.Printf("Unknown msgType:%d with pktLen %d at pos %d\n", msgType, pktLen, r.pos)
+		err = proto.Unmarshal(data, pkt)
+		if err != nil {
+			log.Fatalf("type:%d\npos:%d\npktLen:%d\n%v", p.Id, pos, p.CompressedSize, err)
 		}
 	}
-	if r.LogLevel >= 4 {
-		fmt.Printf("%v\n\n", m)
-	}
+	p.Data = pkt
+	return
+}
+
+func (r *Replay) ReadPacket() (p *Packet, err error) {
+	
+	p, size, err := readPacket(r.buf[r.pos:])
+	r.pos += size
+	
+	
 	//gather some stats about distribution of packets
-	r.PktCount[getPacketName(msgType)]++
+	r.PktCount[getPacketName(p.Id)]++
 	
 
 	p.Name = getPacketName(p.Id)
@@ -224,21 +201,32 @@ func (r *Replay) ReadPacket() (p *Packet, err error) {
 		// DEM_Packet and DEM_SignonPacket have the same structure
 		case 7, 8:
 			//cast from proto.Message to concrete type, to access .Data
-			m2 := m.(*CDemoPacket)
-			packets, err := ParseGamePacket(m2.Data)
+			pkt := p.Data.(*CDemoPacket)
+			// we dont want to output the compressed/packed data
+			p.Data = nil
+			packets, err := ParseGamePacket(pkt.Data)
 			p.Messages = packets
 			if err != nil {
 				return p,err
 			}
 		//FullPacket
 		case 13:
+			// im lazy, so stringTables is data and Packet is decoded to Messages
+			pkt := p.Data.(*CDemoFullPacket)
+			// we dont want to output the compressed/packed data
+			p.Data = pkt.StringTable
+			packets, err := ParseGamePacket(pkt.Packet.Data)
+			p.Messages = packets
 
-		default:
-			p.Data = m
+			//tables, err := ParseGamePacket(pkt.StringTable)
+			//p.Messages = append(p.Messages, tables...)
+			if err != nil {
+				return p,err
+			}
 	 }
 	 
 
-	r.pos += int(pktLen)
+	r.pos += p.CompressedSize
 	return p, err
 
 }
@@ -268,7 +256,7 @@ func getPacketName(i uint64) (name string) {
 // and valve didnt encoded the msgID, tick and msgSize in a protobuf-message
 // so that it would be possible to embed the messages in another protobuf message
 // ... sucks :-)
-func (r *Replay) getType(msgType uint64) (m proto.Message, compressed bool) {
+func getType(msgType uint64) (m proto.Message, compressed bool) {
 	if (msgType & 0x70)==0x70 {
 		msgType = msgType &^ 0x70
 		compressed = true
