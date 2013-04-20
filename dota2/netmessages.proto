@@ -68,8 +68,8 @@ option cc_generic_services = false;
 // An exception to this rule for RTime32 is if the value will frequently be zero rather than set to an actual 
 // time.
 //
-
-import "google/protobuf/descriptor.proto";
+package dota2;
+//import "google/protobuf/descriptor.proto";
 
 //=============================================================================
 // Common Types

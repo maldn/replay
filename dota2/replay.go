@@ -131,6 +131,38 @@ func (r *Replay) Parse() (err error) {
 	return
 }
 
+	// DOTA_UM_AddUnitToSelection = 		   64;
+	// DOTA_UM_AIDebugLine =				   65;
+	// DOTA_UM_ChatEvent =  				   66;
+	// DOTA_UM_CombatHeroPositions =		   67;
+	// DOTA_UM_CombatLogData =  			   68;
+	// DOTA_UM_CombatLogShowDeath = 		   70;
+	// DOTA_UM_CreateLinearProjectile =	   71;
+	// DOTA_UM_DestroyLinearProjectile =	   72;
+	// DOTA_UM_DodgeTrackingProjectiles =	   73;
+	// DOTA_UM_GlobalLightColor =   		   74;
+	// DOTA_UM_GlobalLightDirection =   	   75;
+	// DOTA_UM_InvalidCommand = 			   76;
+	// DOTA_UM_LocationPing =   			   77;
+	// DOTA_UM_MapLine =					   78;
+	// DOTA_UM_MiniKillCamInfo =			   79;
+	// DOTA_UM_MinimapDebugPoint =  		   80;
+	// DOTA_UM_MinimapEvent =   			   81;
+	// DOTA_UM_NevermoreRequiem =   		   82;
+	// DOTA_UM_OverheadEvent =  			   83;
+	// DOTA_UM_SetNextAutobuyItem = 		   84;
+	// DOTA_UM_SharedCooldown = 			   85;
+	// DOTA_UM_SpectatorPlayerClick =   	   86;
+	// DOTA_UM_TutorialTipInfo =			   87;
+	// DOTA_UM_UnitEvent =  				   88;
+	// DOTA_UM_ParticleManager	= 			   89;
+	// DOTA_UM_BotChat =				   	   90;
+	// DOTA_UM_HudError = 					   91;
+	// DOTA_UM_ItemPurchased =				   92;
+	// DOTA_UM_Ping =						   93;
+	// DOTA_UM_ItemFound =					   94;
+
+
 func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 	var pos int = 0
 	gameMessageType, size := binary.Uvarint(buf)
@@ -142,21 +174,122 @@ func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 	gameMessage.Data = nil
 	//fmt.Printf("#####gamePacketType: %v\n",gamePacketType)
 	gameMessage.Id = gameMessageType
+
+
 	switch gameMessageType {
+	case 0:
+		gameMessage.Data = &CNETMsg_NOP{}
+	case 1:
+		gameMessage.Data = &CNETMsg_Disconnect{}
+	case 2:
+		gameMessage.Data = &CNETMsg_File{}
+	case 3:
+		gameMessage.Data = &CNETMsg_SplitScreenUser{}
 	case 4:
 		gameMessage.Data = &CNETMsg_Tick{}
+	case 5:
+		gameMessage.Data = &CNETMsg_StringCmd{}
+	case 6:
+		gameMessage.Data = &CNETMsg_SetConVar{}
 	case 7:
 		gameMessage.Data = &CNETMsg_SignonState{}
-	case 8:
+	case 8:// first message from server about game; map etc
 		gameMessage.Data = &CSVCMsg_ServerInfo{}
+	case 9:// sends a sendtable description for a game class
+		gameMessage.Data = &CSVCMsg_SendTable{}
+		case 10:// Info about classes (first byte is a CLASSINFO_ define).
+		gameMessage.Data = &CSVCMsg_ClassInfo{}
+	case 11:// tells client if server paused or unpaused
+		gameMessage.Data = &CSVCMsg_SetPause{}
+		case 12:// inits shared string tables
+		gameMessage.Data = &CSVCMsg_CreateStringTable{}
+		case 13:// updates a string table
+		gameMessage.Data = &CSVCMsg_UpdateStringTable{}
+		case 14:// inits used voice codecs & quality
+		gameMessage.Data = &CSVCMsg_VoiceInit{}
+		case 15:// Voicestream data from the server
+		gameMessage.Data = &CSVCMsg_VoiceData{}
+		case 16:// print text to console
+		gameMessage.Data = &CSVCMsg_Print{}
+		case 17:// starts playing sound
+		gameMessage.Data = &CSVCMsg_Sounds{}
+		case 18:// sets entity as point of view
+		gameMessage.Data = &CSVCMsg_SetView{}
+		case 19:// sets/corrects players viewangle
+		gameMessage.Data = &CSVCMsg_FixAngle{}
+		case 20:// adjusts crosshair in auto aim mode to lock on traget
+		gameMessage.Data = &CSVCMsg_CrosshairAngle{}
+		case 21:// add a static decal to the world BSP
+		gameMessage.Data = &CSVCMsg_BSPDecal{}
+		case 22:// split screen style message
+		gameMessage.Data = &CSVCMsg_SplitScreen{}
+		case 23:// a game specific message 
+		gameMessage.Data = &CSVCMsg_UserMessage{}
+		
+		case 24:// a message for an entity
+		//FIXME this is undefined in valves .proto
+		//gameMessage.Data = &CSVCMsg_EntityMessage{}
+		case 25:// global game event fired
+		gameMessage.Data = &CSVCMsg_GameEvent{}
+		case 26:// non-delta compressed entities
+		gameMessage.Data = &CSVCMsg_PacketEntities{}
+		case 27:// non-reliable event object
+		gameMessage.Data = &CSVCMsg_TempEntities{}
+		case 28:// only sound indices for now
+		gameMessage.Data = &CSVCMsg_Prefetch{}
+		case 29:// display a menu from a plugin
+		gameMessage.Data = &CSVCMsg_Menu{}
+		case 30:// list of known games events and fields
+		gameMessage.Data = &CSVCMsg_GameEventList{}
+		case 31:// Server wants to know the value of a cvar on the client
+		gameMessage.Data = &CSVCMsg_GetCvarValue{}
 
+		// no unknown messages in my test-replays so far
+	default:
+		log.Printf("unknown gameMessage %v",gameMessageType)
 	}
+	
 	// generic way to set Name to type of .Data
 	//saves some lines of switch statement
 	gameMessage.Name = fmt.Sprintf("%T", gameMessage.Data)
-	if gameMessage.Data != nil {
-		err = proto.Unmarshal(buf[pos:pos+int(gameMessageSize)], gameMessage.Data)
-		gameMessages = append(gameMessages, gameMessage)
+
+	err = proto.Unmarshal(buf[pos:pos+int(gameMessageSize)], gameMessage.Data)
+	
+	//special handling to extract embedded messages
+	switch gameMessageType {
+		case 23: //CSVCMsg_UserMessage
+		// we unpack UserMessages directly
+		// too bad we can't reassign userMessage.MsgData (its type []byte)
+		um := gameMessage.Data.(*CSVCMsg_UserMessage)
+		d,_ := ParseUserMessage(um.MsgData, int(*um.MsgType))
+		gameMessage.Data = d
+	}
+
+	gameMessages = append(gameMessages, gameMessage)
+	return
+}
+
+type UserMessage struct {
+	// we include CSVCMsg_UserMessage so we are as close as possible to 'original' type
+	// but we want the decoded message directly in here
+	// we cant use CSVCMsg_UserMessage.MsgData as the types mismatch ([]byte vs proto.Message)
+	Msg proto.Message
+	MsgType int
+	CSVCMsg_UserMessage
+}
+
+func ParseUserMessage(buf []byte, msgType int) (msg *UserMessage, err error) {
+	msg = &UserMessage{MsgType:msgType}
+
+	switch msgType {
+	case 66:
+		msg.Msg = &CDOTAUserMsg_ChatEvent{}
+	case 92:
+
+	}
+	err := proto.Unmarshal(buf, msg.Msg)
+	if err != nil {
+		log.Fatalf("chat: %v\n%v\n", msg.Msg,err)
 	}
 	return
 }

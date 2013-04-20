@@ -1491,7 +1491,7 @@ func (m *CSVCMsg_BSPDecal) GetLowPriority() bool {
 }
 
 type CSVCMsg_SplitScreen struct {
-	Type             *ESplitScreenMessageType `protobuf:"varint,1,opt,name=type,enum=ESplitScreenMessageType" json:"type,omitempty"`
+	Type             *ESplitScreenMessageType `protobuf:"varint,1,opt,name=type,enum=dota2.ESplitScreenMessageType" json:"type,omitempty"`
 	Slot             *int32                   `protobuf:"varint,2,opt,name=slot" json:"slot,omitempty"`
 	PlayerIndex      *int32                   `protobuf:"varint,3,opt,name=player_index" json:"player_index,omitempty"`
 	XXX_unrecognized []byte                   `json:"-"`
@@ -2219,9 +2219,9 @@ func (m *CSVCMsgList_UserMessagesUsermsgT) GetMsg() *CSVCMsg_UserMessage {
 }
 
 func init() {
-	proto.RegisterEnum("NET_Messages", NET_Messages_name, NET_Messages_value)
-	proto.RegisterEnum("SIGNONSTATE", SIGNONSTATE_name, SIGNONSTATE_value)
-	proto.RegisterEnum("CLC_Messages", CLC_Messages_name, CLC_Messages_value)
-	proto.RegisterEnum("SVC_Messages", SVC_Messages_name, SVC_Messages_value)
-	proto.RegisterEnum("ESplitScreenMessageType", ESplitScreenMessageType_name, ESplitScreenMessageType_value)
+	proto.RegisterEnum("dota2.NET_Messages", NET_Messages_name, NET_Messages_value)
+	proto.RegisterEnum("dota2.SIGNONSTATE", SIGNONSTATE_name, SIGNONSTATE_value)
+	proto.RegisterEnum("dota2.CLC_Messages", CLC_Messages_name, CLC_Messages_value)
+	proto.RegisterEnum("dota2.SVC_Messages", SVC_Messages_name, SVC_Messages_value)
+	proto.RegisterEnum("dota2.ESplitScreenMessageType", ESplitScreenMessageType_name, ESplitScreenMessageType_value)
 }
