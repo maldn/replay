@@ -25,32 +25,33 @@ type Replay struct {
 	buf       []byte
 	size, pos int // replay size, current position
 	LogLevel  int
-	PktCount map[string]int
-	Packets []*Packet `json:"packets`
+	PktCount  map[string]int
+	Packets   []*Packet `json:"packets`
 }
 
 type GameMessage struct {
-	Name string `json:"name"`
-	Id uint64 `json:"msg_id"`
+	Name string        `json:"name"`
+	Id   uint64        `json:"msg_id"`
 	Data proto.Message `json:"data"`
 }
 
 type Packet struct {
-	Name string `json:"name"`
-	Id uint64 `json:"msg_id"`
-	Tick uint64 `json:"tick"`
-	Pos int `json:"position"`
-	Size int `json:"size"`
-	Compressed bool `json:"compressed"`
-	CompressedSize int `json:"compressed_size"`
-	Messages []GameMessage `json:"messages"`
-	Data proto.Message `json:"data"`
+	Name           string        `json:"name"`
+	Id             uint64        `json:"msg_id"`
+	Tick           uint64        `json:"tick"`
+	Pos            int           `json:"position"`
+	Size           int           `json:"size"`
+	Compressed     bool          `json:"compressed"`
+	CompressedSize int           `json:"compressed_size"`
+	Messages       []GameMessage `json:"messages"`
+	Data           proto.Message `json:"data"`
 }
+
 func (p *Packet) String() (s string) {
-	j, err := json.MarshalIndent(p,"","  ")
+	j, err := json.MarshalIndent(p, "", "  ")
 	s = string(j)
 	if err != nil {
-		return fmt.Sprintf("%v",p)
+		return fmt.Sprintf("%v", p)
 	}
 	return s
 
@@ -63,7 +64,7 @@ func NewReplay(filename string) (r *Replay, err error) {
 	//header is a 8 byte string + 32bit size of replay file.
 	r.pos = 12
 	r.PktCount = make(map[string]int)
-	r.Packets = make([]*Packet,0,1000000)
+	r.Packets = make([]*Packet, 0, 1000000)
 	return r, err
 }
 func (r *Replay) Parse() (err error) {
@@ -83,14 +84,14 @@ func (r *Replay) Parse() (err error) {
 		}
 		// used to exclude unwanted (huge) messages.
 		switch p.Id {
-			case 4://SendTables
-			case 5://classInfo
-			case 6://stringTables
-			//case 7://Packet
-			//case 13: //fullPacket
+		case 4: //SendTables
+		case 5: //classInfo
+		case 6: //stringTables
+		//case 7://Packet
+		//case 13: //fullPacket
 
-			default:
-				r.Packets = append(r.Packets, p)
+		default:
+			r.Packets = append(r.Packets, p)
 
 		}
 	}
@@ -109,13 +110,13 @@ func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 	//fmt.Printf("#####gamePacketType: %v\n",gamePacketType)
 	gameMessage.Id = gameMessageType
 	switch gameMessageType {
-		case 4:
-			gameMessage.Data = &CNETMsg_Tick{}
-		case 7:
-			gameMessage.Data = &CNETMsg_SignonState{}
-		case 8:
-			gameMessage.Data = &CSVCMsg_ServerInfo{}
-		
+	case 4:
+		gameMessage.Data = &CNETMsg_Tick{}
+	case 7:
+		gameMessage.Data = &CNETMsg_SignonState{}
+	case 8:
+		gameMessage.Data = &CSVCMsg_ServerInfo{}
+
 	}
 	// generic way to set Name to type of .Data
 	gameMessage.Name = fmt.Sprintf("%T", gameMessage.Data)
@@ -126,7 +127,7 @@ func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 	return
 }
 
-func readPacket(buf []byte) (p *Packet, pos int, err error){
+func readPacket(buf []byte) (p *Packet, pos int, err error) {
 	p = &Packet{}
 	pos = 0
 	pktType, varint_len := binary.Uvarint(buf)
@@ -143,9 +144,8 @@ func readPacket(buf []byte) (p *Packet, pos int, err error){
 	// we overwrite this later in case of a compressed packet
 	p.Size = int(pktLen)
 
-
 	// raw packet data
-	data := buf[pos:pos+p.CompressedSize]
+	data := buf[pos : pos+p.CompressedSize]
 
 	pkt, compressed := getType(p.Id)
 	p.Compressed = compressed
@@ -164,10 +164,10 @@ func readPacket(buf []byte) (p *Packet, pos int, err error){
 		}
 		// set Size to decompressed size, we still have CompressedSize (was set above)
 		p.Size = decodedLen
-		
+
 		err = proto.Unmarshal(data, pkt)
 		if err != nil {
-			fmt.Printf("### %s\n",getPacketName(p.Id))
+			fmt.Printf("### %s\n", getPacketName(p.Id))
 			log.Fatalf("compress decode error type:%d\npos:%d\npktLen:%d\n%v", p.Id, pos, p.CompressedSize, err)
 		}
 
@@ -182,49 +182,46 @@ func readPacket(buf []byte) (p *Packet, pos int, err error){
 }
 
 func (r *Replay) ReadPacket() (p *Packet, err error) {
-	
+
 	p, size, err := readPacket(r.buf[r.pos:])
 	r.pos += size
-	
-	
+
 	//gather some stats about distribution of packets
 	r.PktCount[getPacketName(p.Id)]++
-	
 
 	p.Name = getPacketName(p.Id)
-	
+
 	//p.Data = m.(interface{})
 	p.Pos = r.pos
 
 	//handle messages that contain other packets
 	switch p.Id {
-		// DEM_Packet and DEM_SignonPacket have the same structure
-		case 7, 8:
-			//cast from proto.Message to concrete type, to access .Data
-			pkt := p.Data.(*CDemoPacket)
-			// we dont want to output the compressed/packed data
-			p.Data = nil
-			packets, err := ParseGamePacket(pkt.Data)
-			p.Messages = packets
-			if err != nil {
-				return p,err
-			}
-		//FullPacket
-		case 13:
-			// im lazy, so stringTables is data and Packet is decoded to Messages
-			pkt := p.Data.(*CDemoFullPacket)
-			// we dont want to output the compressed/packed data
-			p.Data = pkt.StringTable
-			packets, err := ParseGamePacket(pkt.Packet.Data)
-			p.Messages = packets
+	// DEM_Packet and DEM_SignonPacket have the same structure
+	case 7, 8:
+		//cast from proto.Message to concrete type, to access .Data
+		pkt := p.Data.(*CDemoPacket)
+		// we dont want to output the compressed/packed data
+		p.Data = nil
+		packets, err := ParseGamePacket(pkt.Data)
+		p.Messages = packets
+		if err != nil {
+			return p, err
+		}
+	//FullPacket
+	case 13:
+		// im lazy, so stringTables is data and Packet is decoded to Messages
+		pkt := p.Data.(*CDemoFullPacket)
+		// we dont want to output the compressed/packed data
+		p.Data = pkt.StringTable
+		packets, err := ParseGamePacket(pkt.Packet.Data)
+		p.Messages = packets
 
-			//tables, err := ParseGamePacket(pkt.StringTable)
-			//p.Messages = append(p.Messages, tables...)
-			if err != nil {
-				return p,err
-			}
-	 }
-	 
+		//tables, err := ParseGamePacket(pkt.StringTable)
+		//p.Messages = append(p.Messages, tables...)
+		if err != nil {
+			return p, err
+		}
+	}
 
 	r.pos += p.CompressedSize
 	return p, err
@@ -236,7 +233,7 @@ func getPacketName(i uint64) (name string) {
 	name = "Unknown Packet"
 	if name = EDemoCommands_name[int32(i)]; name == "" {
 		//maybe it's compressed
-		if name = EDemoCommands_name[int32(i &^ 0x70)]; name != "" {
+		if name = EDemoCommands_name[int32(i&^0x70)]; name != "" {
 			name = "Compressed " + name
 		}
 	}
@@ -257,7 +254,7 @@ func getPacketName(i uint64) (name string) {
 // so that it would be possible to embed the messages in another protobuf message
 // ... sucks :-)
 func getType(msgType uint64) (m proto.Message, compressed bool) {
-	if (msgType & 0x70)==0x70 {
+	if (msgType & 0x70) == 0x70 {
 		msgType = msgType &^ 0x70
 		compressed = true
 	}
@@ -280,7 +277,7 @@ func getType(msgType uint64) (m proto.Message, compressed bool) {
 		m = &CDemoStringTables{}
 	case 7:
 		m = &CDemoPacket{}
-		
+
 	//undefined in valves .proto
 	// but by me :)
 	case 8:
