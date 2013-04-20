@@ -75,13 +75,46 @@ func (r *Replay) Parse() (err error) {
 			err = errors.New(err_msg)
 			return err
 		}
-		//p = &Packet{}
 
-		p, err := r.ReadPacket()
+		p, size, err := readPacket(r.buf[r.pos:])
 		if err != nil {
-			//log.Fatalf("err:%v",err)
 			return err
 		}
+		p.Pos = r.pos
+		r.pos += size
+
+		//gather some stats about distribution of packets
+		r.PktCount[getPacketName(p.Id)]++
+
+		//handle messages that contain other packets
+		switch p.Id {
+		// DEM_Packet and DEM_SignonPacket have the same structure
+		case 7, 8:
+			//cast from proto.Message to concrete type, to access .Data
+			pkt := p.Data.(*CDemoPacket)
+			// we dont want to output the compressed/packed data
+			p.Data = nil
+			packets, err := ParseGamePacket(pkt.Data)
+			p.Messages = packets
+			if err != nil {
+				return err
+			}
+		//FullPacket
+		case 13:
+			// im lazy, so stringTables is data and Packet is decoded to Messages
+			pkt := p.Data.(*CDemoFullPacket)
+			// we dont want to output the compressed/packed data
+			p.Data = pkt.StringTable
+			packets, err := ParseGamePacket(pkt.Packet.Data)
+			p.Messages = packets
+
+			//tables, err := ParseGamePacket(pkt.StringTable)
+			//p.Messages = append(p.Messages, tables...)
+			if err != nil {
+				return err
+			}
+		}
+
 		// used to exclude unwanted (huge) messages.
 		switch p.Id {
 		case 4: //SendTables
@@ -119,6 +152,7 @@ func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 
 	}
 	// generic way to set Name to type of .Data
+	//saves some lines of switch statement
 	gameMessage.Name = fmt.Sprintf("%T", gameMessage.Data)
 	if gameMessage.Data != nil {
 		err = proto.Unmarshal(buf[pos:pos+int(gameMessageSize)], gameMessage.Data)
@@ -128,6 +162,8 @@ func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 }
 
 func readPacket(buf []byte) (p *Packet, pos int, err error) {
+	// read type, tick number and size from stream/buf
+	// then decode the apropriate message and return new/next position in stream
 	p = &Packet{}
 	pos = 0
 	pktType, varint_len := binary.Uvarint(buf)
@@ -177,55 +213,10 @@ func readPacket(buf []byte) (p *Packet, pos int, err error) {
 			log.Fatalf("type:%d\npos:%d\npktLen:%d\n%v", p.Id, pos, p.CompressedSize, err)
 		}
 	}
+	pos += p.CompressedSize
+	p.Name = fmt.Sprintf("%T", pkt)
 	p.Data = pkt
 	return
-}
-
-func (r *Replay) ReadPacket() (p *Packet, err error) {
-
-	p, size, err := readPacket(r.buf[r.pos:])
-	r.pos += size
-
-	//gather some stats about distribution of packets
-	r.PktCount[getPacketName(p.Id)]++
-
-	p.Name = getPacketName(p.Id)
-
-	//p.Data = m.(interface{})
-	p.Pos = r.pos
-
-	//handle messages that contain other packets
-	switch p.Id {
-	// DEM_Packet and DEM_SignonPacket have the same structure
-	case 7, 8:
-		//cast from proto.Message to concrete type, to access .Data
-		pkt := p.Data.(*CDemoPacket)
-		// we dont want to output the compressed/packed data
-		p.Data = nil
-		packets, err := ParseGamePacket(pkt.Data)
-		p.Messages = packets
-		if err != nil {
-			return p, err
-		}
-	//FullPacket
-	case 13:
-		// im lazy, so stringTables is data and Packet is decoded to Messages
-		pkt := p.Data.(*CDemoFullPacket)
-		// we dont want to output the compressed/packed data
-		p.Data = pkt.StringTable
-		packets, err := ParseGamePacket(pkt.Packet.Data)
-		p.Messages = packets
-
-		//tables, err := ParseGamePacket(pkt.StringTable)
-		//p.Messages = append(p.Messages, tables...)
-		if err != nil {
-			return p, err
-		}
-	}
-
-	r.pos += p.CompressedSize
-	return p, err
-
 }
 
 //returns name from demo.proto:enum EDemoCommands
