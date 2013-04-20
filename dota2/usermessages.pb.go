@@ -7,7 +7,6 @@ package dota2
 import proto "code.google.com/p/goprotobuf/proto"
 import json "encoding/json"
 import math "math"
-import dota21 "netmessages.pb"
 
 // Reference proto, json, and math imports to suppress error if they are not otherwise used.
 var _ = proto.Marshal
@@ -322,9 +321,9 @@ func (m *CUserMsg_Shake) GetDuration() float32 {
 }
 
 type CUserMsg_ShakeDir struct {
-	Shake            *CUserMsg_Shake    `protobuf:"bytes,1,opt,name=shake" json:"shake,omitempty"`
-	Direction        *dota21.CMsgVector `protobuf:"bytes,2,opt,name=direction" json:"direction,omitempty"`
-	XXX_unrecognized []byte             `json:"-"`
+	Shake            *CUserMsg_Shake `protobuf:"bytes,1,opt,name=shake" json:"shake,omitempty"`
+	Direction        *CMsgVector     `protobuf:"bytes,2,opt,name=direction" json:"direction,omitempty"`
+	XXX_unrecognized []byte          `json:"-"`
 }
 
 func (m *CUserMsg_ShakeDir) Reset()         { *m = CUserMsg_ShakeDir{} }
@@ -338,7 +337,7 @@ func (m *CUserMsg_ShakeDir) GetShake() *CUserMsg_Shake {
 	return nil
 }
 
-func (m *CUserMsg_ShakeDir) GetDirection() *dota21.CMsgVector {
+func (m *CUserMsg_ShakeDir) GetDirection() *CMsgVector {
 	if m != nil {
 		return m.Direction
 	}
@@ -346,12 +345,12 @@ func (m *CUserMsg_ShakeDir) GetDirection() *dota21.CMsgVector {
 }
 
 type CUserMsg_Tilt struct {
-	Command          *uint32            `protobuf:"varint,1,opt,name=command" json:"command,omitempty"`
-	EaseInOut        *bool              `protobuf:"varint,2,opt,name=ease_in_out" json:"ease_in_out,omitempty"`
-	Angle            *dota21.CMsgVector `protobuf:"bytes,3,opt,name=angle" json:"angle,omitempty"`
-	Duration         *float32           `protobuf:"fixed32,4,opt,name=duration" json:"duration,omitempty"`
-	Time             *float32           `protobuf:"fixed32,5,opt,name=time" json:"time,omitempty"`
-	XXX_unrecognized []byte             `json:"-"`
+	Command          *uint32     `protobuf:"varint,1,opt,name=command" json:"command,omitempty"`
+	EaseInOut        *bool       `protobuf:"varint,2,opt,name=ease_in_out" json:"ease_in_out,omitempty"`
+	Angle            *CMsgVector `protobuf:"bytes,3,opt,name=angle" json:"angle,omitempty"`
+	Duration         *float32    `protobuf:"fixed32,4,opt,name=duration" json:"duration,omitempty"`
+	Time             *float32    `protobuf:"fixed32,5,opt,name=time" json:"time,omitempty"`
+	XXX_unrecognized []byte      `json:"-"`
 }
 
 func (m *CUserMsg_Tilt) Reset()         { *m = CUserMsg_Tilt{} }
@@ -372,7 +371,7 @@ func (m *CUserMsg_Tilt) GetEaseInOut() bool {
 	return false
 }
 
-func (m *CUserMsg_Tilt) GetAngle() *dota21.CMsgVector {
+func (m *CUserMsg_Tilt) GetAngle() *CMsgVector {
 	if m != nil {
 		return m.Angle
 	}

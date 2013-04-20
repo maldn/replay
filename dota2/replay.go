@@ -287,10 +287,12 @@ func ParseUserMessage(buf []byte, msgType int) (msg *UserMessage, err error) {
 	case 92:
 
 	}
-	err := proto.Unmarshal(buf, msg.Msg)
-	if err != nil {
-		log.Fatalf("chat: %v\n%v\n", msg.Msg,err)
+	if msg.Msg != nil {
+		err = proto.Unmarshal(buf, msg.Msg)
+	} else {
+		err = errors.New("unknown usermessage")
 	}
+		
 	return
 }
 
