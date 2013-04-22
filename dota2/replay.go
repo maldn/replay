@@ -21,37 +21,9 @@ type Replay struct {
 	buf       []byte
 	size, pos int // replay size, current position
 	LogLevel  int
-	PktCount  map[string]int
 	Packets   []*Packet `json:"packets`
 }
 
-type GameMessage struct {
-	Name string        `json:"name"`
-	Id   uint64        `json:"msg_id"`
-	Data proto.Message `json:"data"`
-}
-
-type Packet struct {
-	Name           string        `json:"name"`
-	Id             uint64        `json:"msg_id"`
-	Tick           uint64        `json:"tick"`
-	Pos            int           `json:"position"`
-	Size           int           `json:"size"`
-	Compressed     bool          `json:"compressed"`
-	CompressedSize int           `json:"compressed_size"`
-	Messages       []GameMessage `json:"messages"`
-	Data           proto.Message `json:"data"`
-}
-
-func (p *Packet) String() (s string) {
-	j, err := json.MarshalIndent(p, "", "  ")
-	s = string(j)
-	if err != nil {
-		return fmt.Sprintf("%v", p)
-	}
-	return s
-
-}
 func NewReplay(filename string) (r *Replay, err error) {
 	r = new(Replay)
 	r.buf, err = ioutil.ReadFile(filename)
@@ -59,10 +31,10 @@ func NewReplay(filename string) (r *Replay, err error) {
 	//FIXME: validate header
 	//header is a 8 byte string + 32bit size of replay file.
 	r.pos = 12
-	r.PktCount = make(map[string]int)
 	r.Packets = make([]*Packet, 0, 1000000)
 	return r, err
 }
+
 func (r *Replay) Parse() (err error) {
 	for {
 		//TODO: just return, no need for an error
@@ -79,8 +51,6 @@ func (r *Replay) Parse() (err error) {
 		p.Pos = r.pos
 		r.pos += size
 
-		//gather some stats about distribution of packets
-		r.PktCount[getPacketName(p.Id)]++
 
 		//handle messages that contain other packets
 		switch p.Id {
@@ -168,15 +138,6 @@ func ParseGamePacket(buf []byte) (gameMessages []GameMessage, err error) {
 	return
 }
 
-type UserMessage struct {
-	// we include CSVCMsg_UserMessage so we are as close as possible to 'original' type
-	// but we want the decoded message directly in here
-	// we cant use CSVCMsg_UserMessage.MsgData as the types mismatch ([]byte vs proto.Message)
-	Msg     proto.Message
-	MsgType int
-	CSVCMsg_UserMessage
-}
-
 func readPacket(buf []byte) (p *Packet, pos int, err error) {
 	// read type, tick number and size from stream/buf
 	// then decode the apropriate message and return new/next position in stream
@@ -191,8 +152,9 @@ func readPacket(buf []byte) (p *Packet, pos int, err error) {
 	pos += varint_len
 
 	pktLen, varint_len := binary.Uvarint(buf[pos:])
-	pos += varint_len
 	p.CompressedSize = int(pktLen)
+	pos += varint_len
+
 	// we overwrite this later in case of a compressed packet
 	p.Size = int(pktLen)
 
@@ -206,11 +168,10 @@ func readPacket(buf []byte) (p *Packet, pos int, err error) {
 		// we really only care about actual message IDs, not the compression indicator
 		p.Id = p.Id &^ 0x70
 
+		// get decompressed size of data and allocate a buffer for it
 		decodedLen, err := snappy.DecodedLen(data)
 		decoded := make([]byte, decodedLen)
 		data, err := snappy.Decode(decoded, data)
-		//p, s_p := binary.Uvarint(decoded[1:])
-		//data = decoded[0:]
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -219,35 +180,27 @@ func readPacket(buf []byte) (p *Packet, pos int, err error) {
 
 		err = proto.Unmarshal(data, pkt)
 		if err != nil {
-			fmt.Printf("### %s\n", getPacketName(p.Id))
-			log.Fatalf("compress decode error type:%d\npos:%d\npktLen:%d\n%v", p.Id, pos, p.CompressedSize, err)
+			e := "readPacket(): error decoding compressed packet."
+			e += "type:%d\npos:%d\npktLen:%d\n%v"
+			log.Fatalf(e, p.Id, pos, p.CompressedSize, err)
 		}
 
 	} else {
 		err = proto.Unmarshal(data, pkt)
 		if err != nil {
-			log.Fatalf("type:%d\npos:%d\npktLen:%d\n%v", p.Id, pos, p.CompressedSize, err)
+			e := "readPacket(): error decoding packet."
+			e += "type:%d\npos:%d\npktLen:%d\n%v"
+			log.Fatalf(e, p.Id, pos, p.CompressedSize, err)
 		}
 	}
 	pos += p.CompressedSize
 	// generic way to get a meaningful name
 	name := fmt.Sprintf("%T", pkt)
 	// remove the "*dota2."
+	// thats "a pointer to <type> in package dota2" in case you wonder
 	p.Name = strings.Replace(name, "*dota2.", "", 1)
 	p.Data = pkt
 	return
-}
-
-//returns name from demo.proto:enum EDemoCommands
-func getPacketName(i uint64) (name string) {
-	name = "Unknown Packet"
-	if name = EDemoCommands_name[int32(i)]; name == "" {
-		//maybe it's compressed
-		if name = EDemoCommands_name[int32(i&^0x70)]; name != "" {
-			name = "Compressed " + name
-		}
-	}
-	return name
 }
 
 // naming scheme from demo.proto:enum EDemoCommands
@@ -263,6 +216,28 @@ func getPacketName(i uint64) (name string) {
 // and valve didnt encoded the msgID, tick and msgSize in a protobuf-message
 // so that it would be possible to embed the messages in another protobuf message
 // ... sucks :-)
+
+type Packet struct {
+	Name           string        `json:"name"`
+	Id             uint64        `json:"msg_id"`
+	Tick           uint64        `json:"tick"`
+	Pos            int           `json:"position"`
+	Size           int           `json:"size"`
+	Compressed     bool          `json:"compressed"`
+	CompressedSize int           `json:"compressed_size"`
+	Messages       []GameMessage `json:"messages"`
+	Data           proto.Message `json:"data"`
+}
+
+func (p *Packet) String() (s string) {
+	j, err := json.MarshalIndent(p, "", "  ")
+	s = string(j)
+	if err != nil {
+		return fmt.Sprintf("%v", p)
+	}
+	return s
+
+}
 func newDemoPacket(msgType uint64) (m proto.Message, compressed bool) {
 	if (msgType & 0x70) == 0x70 {
 		msgType = msgType &^ 0x70
@@ -313,6 +288,15 @@ func newDemoPacket(msgType uint64) (m proto.Message, compressed bool) {
 		//0x70:&IsCompressed{},
 	}
 	return
+}
+
+
+
+
+type GameMessage struct {
+	Name string        `json:"name"`
+	Id   uint64        `json:"msg_id"`
+	Data proto.Message `json:"data"`
 }
 
 func newGameMessage(id uint64) (msg proto.Message, err error) {
@@ -389,6 +373,17 @@ func newGameMessage(id uint64) (msg proto.Message, err error) {
 		err = errors.New(fmt.Sprintf("unknown gameMessage %d", id))
 	}
 	return
+}
+
+
+
+type UserMessage struct {
+	// we include CSVCMsg_UserMessage so we are as close as possible to 'original' type
+	// but we want the decoded message directly in here
+	// we cant use CSVCMsg_UserMessage.MsgData as the types mismatch ([]byte vs proto.Message)
+	Msg     proto.Message
+	MsgType int
+	CSVCMsg_UserMessage
 }
 
 // DOTA_UM_AddUnitToSelection = 		   64;
